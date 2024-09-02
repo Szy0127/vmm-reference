@@ -209,7 +209,8 @@ type Balloon = balloon::Balloon<Arc<GuestMemoryMmap>>;
 
 /// A live VMM.
 pub struct Vmm {
-    vm: KvmVm<WrappedExitHandler>,
+    ///
+    pub vm: KvmVm<WrappedExitHandler>,
     kernel_cfg: KernelConfig,
     guest_memory: GuestMemoryMmap,
     address_allocator: AddressAllocator,
@@ -220,8 +221,6 @@ pub struct Vmm {
     // Arc<Mutex<>> because the same device (a dyn DevicePio/DeviceMmio from IoManager's
     // perspective, and a dyn MutEventSubscriber from EventManager's) is managed by the 2 entities,
     // and isn't Copy-able; so once one of them gets ownership, the other one can't anymore.
-    event_mgr: EventManager<Arc<Mutex<dyn MutEventSubscriber + Send>>>,
-    exit_handler: WrappedExitHandler,
     block_devices: Vec<Arc<Mutex<Block>>>,
     net_devices: Vec<Arc<Mutex<Net>>>,
     balloon_devices: Vec<Arc<Mutex<Balloon>>>,
@@ -238,7 +237,8 @@ pub struct Vmm {
 // The Vm is notifying us through the `kick` method when it exited. Once the Vm finished
 // the execution, it is time for the event manager loop to also exit. This way, we can
 // terminate the VMM process cleanly.
-struct VmmExitHandler {
+///
+pub struct VmmExitHandler {
     exit_event: EventFd,
     keep_running: AtomicBool,
 }
@@ -246,18 +246,23 @@ struct VmmExitHandler {
 // The wrapped exit handler is needed because the ownership of the inner `VmmExitHandler` is
 // shared between the `KvmVm` and the `EventManager`. Clone is required for implementing the
 // `ExitHandler` trait.
+///
 #[derive(Clone)]
-struct WrappedExitHandler(Arc<Mutex<VmmExitHandler>>);
+pub struct WrappedExitHandler(
+    ///
+    pub Arc<Mutex<VmmExitHandler>>);
 
 impl WrappedExitHandler {
-    fn new() -> Result<WrappedExitHandler> {
+    ///
+    pub fn new() -> Result<WrappedExitHandler> {
         Ok(WrappedExitHandler(Arc::new(Mutex::new(VmmExitHandler {
             exit_event: EventFd::new(libc::EFD_NONBLOCK).map_err(Error::ExitEvent)?,
             keep_running: AtomicBool::new(true),
         }))))
     }
 
-    fn keep_running(&self) -> bool {
+    ///
+    pub fn keep_running(&self) -> bool {
         self.0.lock().unwrap().keep_running.load(Ordering::Acquire)
     }
 }
@@ -286,10 +291,21 @@ impl MutEventSubscriber for VmmExitHandler {
     }
 }
 
-impl TryFrom<VMMConfig> for Vmm {
-    type Error = Error;
+///
+pub trait TryFrom1{
+///
+    fn try_from1(config: VMMConfig, 
+        exit_handler: &WrappedExitHandler,
+        event_mgr: &mut EventManager<Arc<Mutex<dyn MutEventSubscriber + Send>>>,
+        ) -> Result<Vmm>;
+}
+impl TryFrom1 for Vmm {
+    //type Error = Error;
 
-    fn try_from(config: VMMConfig) -> Result<Self> {
+    fn try_from1(config: VMMConfig, 
+        exit_handler: &WrappedExitHandler,
+        event_mgr: &mut EventManager<Arc<Mutex<dyn MutEventSubscriber + Send>>>,
+        ) -> Result<Vmm> {
         let kvm = Kvm::new().map_err(Error::KvmIoctl)?;
 
         // Check that the KVM on the host is supported.
@@ -305,18 +321,14 @@ impl TryFrom<VMMConfig> for Vmm {
 
         // Create the KvmVm.
         let vm_config = VmConfig::new(&kvm, config.vcpu_config.num, MAX_IRQ)?;
-        let wrapped_exit_handler = WrappedExitHandler::new()?;
         let vm = KvmVm::new(
             &kvm,
             vm_config,
             &guest_memory,
-            wrapped_exit_handler.clone(),
+            exit_handler.clone(),
             device_mgr.clone(),
         )?;
 
-        let mut event_manager = EventManager::<Arc<Mutex<dyn MutEventSubscriber + Send>>>::new()
-            .map_err(Error::EventManager)?;
-        event_manager.add_subscriber(wrapped_exit_handler.0.clone());
         #[cfg(target_arch = "aarch64")]
         let fdt_builder = FdtBuilder::new();
 
@@ -328,9 +340,7 @@ impl TryFrom<VMMConfig> for Vmm {
             address_allocator,
             irq_allocator,
             device_mgr,
-            event_mgr: event_manager,
             kernel_cfg: config.kernel_config,
-            exit_handler: wrapped_exit_handler,
             block_devices: Vec::new(),
             net_devices: Vec::new(),
             balloon_devices: Vec::new(),
@@ -339,7 +349,7 @@ impl TryFrom<VMMConfig> for Vmm {
             #[cfg(target_arch = "aarch64")]
             fdt_builder,
         };
-        vmm.add_serial_console()?;
+        vmm.add_serial_console(event_mgr)?;
         #[cfg(target_arch = "x86_64")]
         vmm.add_i8042_device()?;
         #[cfg(target_arch = "aarch64")]
@@ -347,13 +357,13 @@ impl TryFrom<VMMConfig> for Vmm {
 
         // Adding the virtio devices. We'll come up with a cleaner abstraction for `Env`.
         if let Some(cfg) = config.block_config.as_ref() {
-            vmm.add_block_device(cfg)?;
+            vmm.add_block_device(cfg, event_mgr)?;
         }
 
         if let Some(cfg) = config.net_config.as_ref() {
-            vmm.add_net_device(cfg)?;
+            vmm.add_net_device(cfg, event_mgr)?;
         }
-        vmm.add_balloon_device()?;
+        vmm.add_balloon_device(event_mgr)?;
 
         Ok(vmm)
     }
@@ -375,6 +385,8 @@ impl Vmm {
         }
 
         self.vm.run(Some(kernel_load_addr)).map_err(Error::Vm)?;
+        Ok(())
+            /*
         let mut i = 0;
         loop {
             i += 1;
@@ -398,10 +410,12 @@ impl Vmm {
         self.vm.shutdown();
 
         Ok(())
+        */
     }
 
     /// change balloon config
     pub fn change_balloon_config(&mut self, size:u64) {
+        println!("change balloon config");
         self.balloon_devices[0].lock().unwrap().change_config(size);
     }
 
@@ -520,7 +534,9 @@ impl Vmm {
     }
 
     // Create and add a serial console to the VMM.
-    fn add_serial_console(&mut self) -> Result<()> {
+    fn add_serial_console(&mut self,
+        event_mgr: &mut EventManager<Arc<Mutex<dyn MutEventSubscriber + Send>>>,
+        ) -> Result<()> {
         // Create the serial console.
         let interrupt_evt = EventFdTrigger::new(libc::EFD_NONBLOCK).map_err(Error::IO)?;
         let serial = Arc::new(Mutex::new(SerialWrapper(Serial::new(
@@ -573,7 +589,7 @@ impl Vmm {
         }
 
         // Hook it to event management.
-        self.event_mgr.add_subscriber(serial);
+        event_mgr.add_subscriber(serial);
 
         Ok(())
     }
@@ -618,7 +634,9 @@ impl Vmm {
     // only support a single device. We need to expand this, but it looks like a good match if we
     // can do it after figuring out how to better separate concerns and make the VMM agnostic of
     // the actual device types.
-    fn add_block_device(&mut self, cfg: &BlockConfig) -> Result<()> {
+    fn add_block_device(&mut self, cfg: &BlockConfig,
+        event_mgr: &mut EventManager<Arc<Mutex<dyn MutEventSubscriber + Send>>>,
+        ) -> Result<()> {
         let mem = Arc::new(self.guest_memory.clone());
         let range = self.address_allocator.allocate(
             0x1000,
@@ -637,7 +655,7 @@ impl Vmm {
         let mut env = Env {
             mem,
             vm_fd: self.vm.vm_fd(),
-            event_mgr: &mut self.event_mgr,
+            event_mgr: event_mgr,
             mmio_mgr: guard.deref_mut(),
             mmio_cfg,
             kernel_cmdline: &mut self.kernel_cfg.cmdline,
@@ -660,7 +678,9 @@ impl Vmm {
         Ok(())
     }
 
-    fn add_balloon_device(&mut self) -> Result<()> {
+    fn add_balloon_device(&mut self,
+        event_mgr: &mut EventManager<Arc<Mutex<dyn MutEventSubscriber + Send>>>,
+        ) -> Result<()> {
         let mem = Arc::new(self.guest_memory.clone());
         let range = self.address_allocator.allocate(
             0x1000,
@@ -679,7 +699,7 @@ impl Vmm {
         let mut env = Env {
             mem,
             vm_fd: self.vm.vm_fd(),
-            event_mgr: &mut self.event_mgr,
+            event_mgr: event_mgr,
             mmio_mgr: guard.deref_mut(),
             mmio_cfg,
             kernel_cmdline: &mut self.kernel_cfg.cmdline,
@@ -696,7 +716,9 @@ impl Vmm {
         Ok(())
     }
 
-    fn add_net_device(&mut self, cfg: &NetConfig) -> Result<()> {
+    fn add_net_device(&mut self, cfg: &NetConfig,
+        event_mgr: &mut EventManager<Arc<Mutex<dyn MutEventSubscriber + Send>>>,
+        ) -> Result<()> {
         let mem = Arc::new(self.guest_memory.clone());
         let range = self.address_allocator.allocate(
             0x1000,
@@ -715,7 +737,7 @@ impl Vmm {
         let mut env = Env {
             mem,
             vm_fd: self.vm.vm_fd(),
-            event_mgr: &mut self.event_mgr,
+            event_mgr: event_mgr,
             mmio_mgr: guard.deref_mut(),
             mmio_cfg,
             kernel_cmdline: &mut self.kernel_cfg.cmdline,
@@ -912,9 +934,7 @@ mod tests {
             address_allocator,
             irq_allocator,
             device_mgr,
-            event_mgr: EventManager::new().unwrap(),
             kernel_cfg: vmm_config.kernel_config,
-            exit_handler,
             block_devices: Vec::new(),
             net_devices: Vec::new(),
             balloon_devices: Vec::new(),

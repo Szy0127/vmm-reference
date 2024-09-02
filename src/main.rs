@@ -1,6 +1,5 @@
 // Copyright 2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0 OR BSD-3-Clause
-use std::convert::TryFrom;
 use std::env;
 use std::thread;
 use std::io::{Read,Result};
@@ -8,10 +7,10 @@ use std::os::unix::net::{UnixListener,UnixStream};
 
 use std::sync::{Arc, Mutex};
 use api::Cli;
-use vmm::Vmm;
+use vmm::{TryFrom1,Vmm, WrappedExitHandler};
+use event_manager::{EventManager,MutEventSubscriber, SubscriberOps};
 
 
-/*
 fn start_unix_socket_server(vmm: Arc<Mutex<Vmm>>) -> Result<()> {
 
     let listener = UnixListener::bind("/tmp/rust-vmm.sock").expect("create sock fail");
@@ -20,6 +19,7 @@ fn start_unix_socket_server(vmm: Arc<Mutex<Vmm>>) -> Result<()> {
         for stream in listener.incoming() {
             match stream {
                 Ok(mut stream) => {
+                    let vmm = vmm.clone();
                     thread::spawn(move||{
                     let mut buffer = [0;1024];
                     match stream.read(&mut buffer) {
@@ -52,7 +52,6 @@ fn start_unix_socket_server(vmm: Arc<Mutex<Vmm>>) -> Result<()> {
     });
     Ok(())
 }
-*/
 fn main() {
     match Cli::launch(
         env::args()
@@ -62,12 +61,26 @@ fn main() {
             .collect(),
     ) {
         Ok(vmm_config) => {
+            let wrapped_exit_handler = WrappedExitHandler::new().expect("exit create failed");
+            let mut event_manager = EventManager::<Arc<Mutex<dyn MutEventSubscriber + Send>>>::new()
+                .expect("event create failed");
+            event_manager.add_subscriber(wrapped_exit_handler.0.clone());
             let mut vmm =
-                Vmm::try_from(vmm_config).expect("Failed to create VMM from configurations");
-            //start_unix_socket_server(Arc::new(Mutex::new(vmm)));
+                Arc::new(Mutex::new(Vmm::try_from1(vmm_config, &wrapped_exit_handler, &mut event_manager).expect("Failed to create VMM from configurations")));
+            start_unix_socket_server(vmm.clone());
             // For now we are just unwrapping here, in the future we might use a nicer way of
             // handling errors such as pretty printing them.
-            vmm.run().unwrap();
+            vmm.lock().unwrap().run().unwrap();
+            loop {
+                match event_manager.run() {
+                   Ok(_) => (),
+                   Err(e) => eprintln!("Failed to handle events: {:?}", e),
+               }
+               if !wrapped_exit_handler.keep_running() {
+                   break;
+               }
+            }
+            vmm.lock().unwrap().vm.shutdown();
         }
         Err(e) => {
             eprintln!("Failed to parse command line options. {}", e);
