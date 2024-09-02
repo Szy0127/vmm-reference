@@ -58,6 +58,7 @@ use boot::build_bootparams;
 pub use config::*;
 use devices::virtio::block::{self, BlockArgs};
 use devices::virtio::net::{self, NetArgs};
+use devices::virtio::balloon::{self, BalloonArgs};
 use devices::virtio::{Env, MmioConfig};
 
 #[cfg(target_arch = "x86_64")]
@@ -137,6 +138,8 @@ pub enum MemoryError {
 pub enum Error {
     /// Failed to create block device.
     Block(block::Error),
+    /// Failed to create balloon device.
+    Balloon(balloon::Error),
     /// Failed to write boot parameters to guest memory.
     #[cfg(target_arch = "x86_64")]
     BootConfigure(configurator::Error),
@@ -202,6 +205,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 type Block = block::Block<Arc<GuestMemoryMmap>>;
 type Net = net::Net<Arc<GuestMemoryMmap>>;
+type Balloon = balloon::Balloon<Arc<GuestMemoryMmap>>;
 
 /// A live VMM.
 pub struct Vmm {
@@ -220,6 +224,7 @@ pub struct Vmm {
     exit_handler: WrappedExitHandler,
     block_devices: Vec<Arc<Mutex<Block>>>,
     net_devices: Vec<Arc<Mutex<Net>>>,
+    balloon_devices: Vec<Arc<Mutex<Balloon>>>,
     // TODO: fetch the vcpu number from the `vm` object.
     // TODO-continued: this is needed to make the arm POC work as we need to create the FDT
     // TODO-continued: after the other resources are created.
@@ -328,6 +333,7 @@ impl TryFrom<VMMConfig> for Vmm {
             exit_handler: wrapped_exit_handler,
             block_devices: Vec::new(),
             net_devices: Vec::new(),
+            balloon_devices: Vec::new(),
             #[cfg(target_arch = "aarch64")]
             num_vcpus: config.vcpu_config.num as u64,
             #[cfg(target_arch = "aarch64")]
@@ -347,6 +353,7 @@ impl TryFrom<VMMConfig> for Vmm {
         if let Some(cfg) = config.net_config.as_ref() {
             vmm.add_net_device(cfg)?;
         }
+        vmm.add_balloon_device()?;
 
         Ok(vmm)
     }
@@ -368,7 +375,18 @@ impl Vmm {
         }
 
         self.vm.run(Some(kernel_load_addr)).map_err(Error::Vm)?;
+        let mut i = 0;
         loop {
+            i += 1;
+            if i == 1000{
+                println!("balloon start");
+                self.balloon_devices[0].lock().unwrap().change_config(1024);
+                /*
+                self.balloon_devices[0].lock().unwrap().cfg.irqfd.write(1).map_err(|err|{
+                    println!("send irq error");
+                });
+                */
+            }
             match self.event_mgr.run() {
                 Ok(_) => (),
                 Err(e) => eprintln!("Failed to handle events: {:?}", e),
@@ -380,6 +398,11 @@ impl Vmm {
         self.vm.shutdown();
 
         Ok(())
+    }
+
+    /// change balloon config
+    pub fn change_balloon_config(&mut self, size:u64) {
+        self.balloon_devices[0].lock().unwrap().change_config(size);
     }
 
     // Create guest memory regions.
@@ -637,6 +660,42 @@ impl Vmm {
         Ok(())
     }
 
+    fn add_balloon_device(&mut self) -> Result<()> {
+        let mem = Arc::new(self.guest_memory.clone());
+        let range = self.address_allocator.allocate(
+            0x1000,
+            DEFAULT_ADDRESSS_ALIGNEMNT,
+            DEFAULT_ALLOC_POLICY,
+        )?;
+        let irq = self.irq_allocator.next_irq()?;
+        let mmio_range = mmio_from_range(&range);
+        let mmio_cfg = MmioConfig {
+            range: mmio_range,
+            gsi: irq,
+        };
+
+        let mut guard = self.device_mgr.lock().unwrap();
+
+        let mut env = Env {
+            mem,
+            vm_fd: self.vm.vm_fd(),
+            event_mgr: &mut self.event_mgr,
+            mmio_mgr: guard.deref_mut(),
+            mmio_cfg,
+            kernel_cmdline: &mut self.kernel_cfg.cmdline,
+        };
+
+        let args = BalloonArgs {
+            guest_memory:self.guest_memory.clone()
+        };
+
+        // We can also hold this somewhere if we need to keep the handle for later.
+        let balloon = Balloon::new(&mut env, &args).map_err(Error::Balloon)?;
+        self.balloon_devices.push(balloon);
+
+        Ok(())
+    }
+
     fn add_net_device(&mut self, cfg: &NetConfig) -> Result<()> {
         let mem = Arc::new(self.guest_memory.clone());
         let range = self.address_allocator.allocate(
@@ -858,6 +917,7 @@ mod tests {
             exit_handler,
             block_devices: Vec::new(),
             net_devices: Vec::new(),
+            balloon_devices: Vec::new(),
             #[cfg(target_arch = "aarch64")]
             num_vcpus: vmm_config.vcpu_config.num as u64,
             #[cfg(target_arch = "aarch64")]

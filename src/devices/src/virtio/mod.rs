@@ -5,6 +5,7 @@
 
 pub mod block;
 pub mod net;
+pub mod balloon;
 
 use std::convert::TryFrom;
 use std::io;
