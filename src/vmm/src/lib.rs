@@ -386,36 +386,10 @@ impl Vmm {
 
         self.vm.run(Some(kernel_load_addr)).map_err(Error::Vm)?;
         Ok(())
-            /*
-        let mut i = 0;
-        loop {
-            i += 1;
-            if i == 1000{
-                println!("balloon start");
-                self.balloon_devices[0].lock().unwrap().change_config(1024);
-                /*
-                self.balloon_devices[0].lock().unwrap().cfg.irqfd.write(1).map_err(|err|{
-                    println!("send irq error");
-                });
-                */
-            }
-            match self.event_mgr.run() {
-                Ok(_) => (),
-                Err(e) => eprintln!("Failed to handle events: {:?}", e),
-            }
-            if !self.exit_handler.keep_running() {
-                break;
-            }
-        }
-        self.vm.shutdown();
-
-        Ok(())
-        */
     }
 
     /// change balloon config
     pub fn change_balloon_config(&mut self, size:u64) {
-        println!("change balloon config");
         self.balloon_devices[0].lock().unwrap().change_config(size);
     }
 

@@ -76,7 +76,6 @@ where
         Ok(balloon)
     }
     pub fn change_config(&mut self,size: u64){
-        println!("balloon change config\n");
         self.write(256, &size.to_le_bytes());
         self.cfg.virtio.interrupt_status.fetch_or(VIRTIO_MMIO_INT_CONFIG, Ordering::SeqCst);
         self.cfg.irqfd.write(1).expect("fail write to eventfd");

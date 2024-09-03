@@ -56,19 +56,11 @@ where
     S: SignalUsedQueue,
 {
     fn inflate_page(&mut self, pfn:u32) -> result::Result<(), Error> {
-        //println!("balloon process chain pfn {}", pfn);
         let gva = GuestAddress((pfn << 12).into());
         //TODO 
         //if let Some(region) = self.guest_mem.find_region(gva) {
             let hva = self.guest_mem.get_host_address(gva)
                 .expect("get hva failed");
-
-            //println!("hva {}", hva.unwrap() as u64);
-            /*
-            unsafe{
-                println!("value:{}", *(hva.unwrap() as *const u64));
-            }
-            */
             let ret = unsafe{
                 libc::madvise(hva.cast(), 4096, libc::MADV_DONTNEED)
             };
@@ -76,9 +68,6 @@ where
                 println!("madvise failed");
             } else {
                 self.inflate_page_num += 1;
-                if self.inflate_page_num % 1000 == 0 {
-                    println!("inflate page num {}", self.inflate_page_num);
-                }
             }
         //}
         Ok(())
