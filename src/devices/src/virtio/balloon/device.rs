@@ -75,6 +75,8 @@ where
 
         Ok(balloon)
     }
+    /// config: number of pages need to be inflated
+    /// 524288: inflate 2G   0: give back all guest's memory
     pub fn change_config(&mut self,size: u64){
         self.write(256, &size.to_le_bytes());
         self.cfg.virtio.interrupt_status.fetch_or(VIRTIO_MMIO_INT_CONFIG, Ordering::SeqCst);

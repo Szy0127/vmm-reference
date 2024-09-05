@@ -72,7 +72,26 @@ where
         //}
         Ok(())
     }
-    fn process_chain(&mut self, chain: &mut DescriptorChain<M::T>) -> result::Result<(), Error> {
+    
+    fn deflate_page(&mut self, pfn:u32) -> result::Result<(), Error> {
+        let gva = GuestAddress((pfn << 12).into());
+        //TODO 
+        //if let Some(region) = self.guest_mem.find_region(gva) {
+            let hva = self.guest_mem.get_host_address(gva)
+                .expect("get hva failed");
+            let ret = unsafe{
+                libc::madvise(hva.cast(), 4096, libc::MADV_WILLNEED)
+            };
+            if ret < 0 {
+                println!("madvise failed");
+            } else {
+                self.inflate_page_num -= 1;
+            }
+        //}
+        Ok(())
+    }
+        
+    fn process_chain(&mut self, chain: &mut DescriptorChain<M::T>, is_inflate:bool) -> result::Result<(), Error> {
         let mut buf:[u8;4] = [0;4];
         while let Some(desc) = chain.next() {
             let mut offset:u64 = 0;
@@ -84,7 +103,11 @@ where
                     .map_err(Error::GuestMemory)?;
 
                 let pfn = u32::from_le_bytes(buf);
-                self.inflate_page(pfn);
+                if is_inflate {
+                    self.inflate_page(pfn);
+                } else {
+                    self.deflate_page(pfn);
+                }
 
                 offset += 4;
 
@@ -95,14 +118,14 @@ where
         Ok(())
     }
 
-    pub fn process_queue(&mut self) -> result::Result<(), Error> {
+    pub fn process_inflate(&mut self) -> result::Result<(), Error> {
         // To see why this is done in a loop, please look at the `Queue::enable_notification`
         // comments in `virtio_queue`.
         loop {
             self.inflate.disable_notification()?;
 
             while let Some(mut chain) = self.inflate.iter()?.next() {
-                self.process_chain(&mut chain)?;
+                self.process_chain(&mut chain, true)?;
                 self.inflate.add_used(chain.head_index(), 0)?;
 
                 if self.inflate.needs_notification()? {
@@ -111,6 +134,29 @@ where
             }
 
             if !self.inflate.enable_notification()? {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn process_deflate(&mut self) -> result::Result<(), Error> {
+        // To see why this is done in a loop, please look at the `Queue::enable_notification`
+        // comments in `virtio_queue`.
+        loop {
+            self.deflate.disable_notification()?;
+
+            while let Some(mut chain) = self.deflate.iter()?.next() {
+                self.process_chain(&mut chain, false)?;
+                self.deflate.add_used(chain.head_index(), 0)?;
+
+                if self.deflate.needs_notification()? {
+                    self.driver_notify.signal_used_queue(0);
+                }
+            }
+
+            if !self.deflate.enable_notification()? {
                 break;
             }
         }
