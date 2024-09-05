@@ -50,6 +50,13 @@ impl Cli {
                     .required(false)
                     .takes_value(true)
                     .help("Block device configuration. \n\tFormat: \"path=<string>\"")
+            )
+            .arg(
+                Arg::with_name("balloon")
+                    .long("balloon")
+                    .required(false)
+                    .takes_value(true)
+                    .help("Balloon device configuration. \n\tFormat: \"path=<string>\"")
             );
 
         // Save the usage beforehand as a string, because `get_matches` consumes the `App`.
@@ -69,6 +76,7 @@ impl Cli {
             .vcpu_config(matches.value_of("vcpu"))
             .net_config(matches.value_of("net"))
             .block_config(matches.value_of("block"))
+            .balloon_config(matches.value_of("balloon"))
             .build()
             .map_err(|e| format!("{:?}", e))
     }

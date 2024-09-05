@@ -363,7 +363,9 @@ impl TryFrom1 for Vmm {
         if let Some(cfg) = config.net_config.as_ref() {
             vmm.add_net_device(cfg, event_mgr)?;
         }
-        vmm.add_balloon_device(event_mgr)?;
+        if let Some(cfg) = config.balloon_config.as_ref() {
+            vmm.add_balloon_device(event_mgr)?;
+        }
 
         Ok(vmm)
     }
@@ -389,8 +391,12 @@ impl Vmm {
     }
 
     /// change balloon config
-    pub fn change_balloon_config(&mut self, size:u64) {
+    pub fn change_balloon_config(&mut self, size:u64) -> bool {
+        if self.balloon_devices.is_empty() {
+            return false;
+        }
         self.balloon_devices[0].lock().unwrap().change_config(size);
+        return true;
     }
 
     // Create guest memory regions.

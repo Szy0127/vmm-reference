@@ -37,7 +37,10 @@ fn start_unix_socket_server(vmm: Arc<Mutex<Vmm>>) -> Result<()> {
                             match command {
                                 "balloon" => {
                                     let mut vmm = vmm.lock().unwrap();
-                                    vmm.change_balloon_config(number);
+                                    let success = vmm.change_balloon_config(number);
+                                    if !success {
+                                        eprintln!("Failed to balloon, please add balloon device");
+                                    }
                                 }
                                 "shutdown" => {
                                     vmm.lock().unwrap().vm.shutdown();

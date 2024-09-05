@@ -5,7 +5,7 @@
 use std::convert::TryFrom;
 
 use super::{
-    BlockConfig, ConversionError, KernelConfig, MemoryConfig, NetConfig, VMMConfig, VcpuConfig,
+    BalloonConfig, BlockConfig, ConversionError, KernelConfig, MemoryConfig, NetConfig, VMMConfig, VcpuConfig,
 };
 
 /// Builder structure for VMMConfig
@@ -162,6 +162,26 @@ impl Builder {
         match block {
             Some(b) => self.and_then(|mut config| {
                 config.block_config = Some(TryFrom::try_from(b).map_err(Into::into)?);
+                Ok(config)
+            }),
+            None => self,
+        }
+    }
+
+    /// Configure Builder with Balloon Device Configuration for the VMM.
+    ///
+    /// # Example
+    ///
+    /// You can see example of how to use this function in [`Example` section from
+    /// `build`](#method.build)
+    pub fn balloon_config<T>(self, balloon: Option<T>) -> Self
+    where
+        BalloonConfig: TryFrom<T>,
+        <BalloonConfig as TryFrom<T>>::Error: Into<ConversionError>,
+    {
+        match balloon {
+            Some(b) => self.and_then(|mut config| {
+                config.balloon_config = Some(TryFrom::try_from(b).map_err(Into::into)?);
                 Ok(config)
             }),
             None => self,

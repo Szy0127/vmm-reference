@@ -258,6 +258,19 @@ impl TryFrom<&str> for BlockConfig {
     }
 }
 
+/// Balloon device configuration
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BalloonConfig {
+}
+
+impl TryFrom<&str> for BalloonConfig {
+    type Error = ConversionError;
+
+    fn try_from(balloon_cfg_str: &str) -> Result<Self, Self::Error> {
+        Ok(BalloonConfig {})
+    }
+}
+
 /// VMM configuration.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct VMMConfig {
@@ -271,6 +284,8 @@ pub struct VMMConfig {
     pub net_config: Option<NetConfig>,
     /// Block device configuration.
     pub block_config: Option<BlockConfig>,
+    /// Balloon device configuration.
+    pub balloon_config: Option<BalloonConfig>,
 }
 
 #[cfg(test)]
