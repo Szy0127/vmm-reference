@@ -11,9 +11,10 @@ use vmm::{TryFrom1,Vmm, WrappedExitHandler};
 use event_manager::{EventManager,MutEventSubscriber, SubscriberOps};
 
 
+const sock_path:&str = "/tmp/rust-vmm.sock";
 fn start_unix_socket_server(vmm: Arc<Mutex<Vmm>>) -> Result<()> {
 
-    let listener = UnixListener::bind("/tmp/rust-vmm.sock").expect("create sock fail");
+    let listener = UnixListener::bind(sock_path).expect("create sock fail");
     thread::spawn(move || {
         for stream in listener.incoming() {
             match stream {
@@ -33,8 +34,20 @@ fn start_unix_socket_server(vmm: Arc<Mutex<Vmm>>) -> Result<()> {
                                 }
                             };
                             let number: u64 = number_str.parse().unwrap();
-                            let mut vmm = vmm.lock().unwrap();
-                            vmm.change_balloon_config(number);
+                            match command {
+                                "balloon" => {
+                                    let mut vmm = vmm.lock().unwrap();
+                                    vmm.change_balloon_config(number);
+                                }
+                                "shutdown" => {
+                                    vmm.lock().unwrap().vm.shutdown();
+                                    std::fs::remove_file(sock_path);
+                                    std::process::exit(0);
+                                }
+                                cmd => {
+                                    eprintln!("unkown {}", cmd);
+                                }
+                            }
                         }
                         Err(e) => {
                             eprintln!("fail {}", e);
