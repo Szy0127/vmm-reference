@@ -54,11 +54,8 @@ where
         ];
 
 
-        let mut config_space = Vec::new();
-        config_space.push(0);//virtioballoon_config
-        config_space.push(0);
-        config_space.push(0);
-        config_space.push(0);
+        let config_data:u64 = 0 ;//virtio_balloon_config  u32 numpages;u32 actual
+        let config_space = config_data.to_le_bytes().to_vec();
         let virtio_cfg = VirtioConfig::new(device_features, queues, config_space);
 
         let common_cfg = CommonConfig::new(virtio_cfg, env).map_err(Error::Virtio)?;

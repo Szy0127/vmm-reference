@@ -12,6 +12,10 @@ use vm_memory::{self, Bytes, GuestAddress,GuestAddressSpace, Address, GuestMemor
 
 use crate::virtio::SignalUsedQueue;
 
+const BALLOON_PAGE_SIZE:u32 = 4096;
+const BALLOON_PAGE_OFFSET:u32 = 12;
+const BALLOON_PFN_SIZE_BYTES:u32 = 4;
+
 #[derive(Debug)]
 pub enum Error {
     GuestMemory(vm_memory::GuestMemoryError),
@@ -56,13 +60,13 @@ where
     S: SignalUsedQueue,
 {
     fn inflate_page(&mut self, pfn:u32) -> result::Result<(), Error> {
-        let gva = GuestAddress((pfn << 12).into());
+        let gva = GuestAddress((pfn << BALLOON_PAGE_OFFSET).into());
         //TODO 
         //if let Some(region) = self.guest_mem.find_region(gva) {
             let hva = self.guest_mem.get_host_address(gva)
                 .expect("get hva failed");
             let ret = unsafe{
-                libc::madvise(hva.cast(), 4096, libc::MADV_DONTNEED)
+                libc::madvise(hva.cast(), BALLOON_PAGE_SIZE as usize, libc::MADV_DONTNEED)
             };
             if ret < 0 {
                 println!("madvise failed");
@@ -74,13 +78,13 @@ where
     }
     
     fn deflate_page(&mut self, pfn:u32) -> result::Result<(), Error> {
-        let gva = GuestAddress((pfn << 12).into());
+        let gva = GuestAddress((pfn << BALLOON_PAGE_OFFSET).into());
         //TODO 
         //if let Some(region) = self.guest_mem.find_region(gva) {
             let hva = self.guest_mem.get_host_address(gva)
                 .expect("get hva failed");
             let ret = unsafe{
-                libc::madvise(hva.cast(), 4096, libc::MADV_WILLNEED)
+                libc::madvise(hva.cast(), BALLOON_PAGE_SIZE as usize, libc::MADV_WILLNEED)
             };
             if ret < 0 {
                 println!("madvise failed");
@@ -92,7 +96,7 @@ where
     }
         
     fn process_chain(&mut self, chain: &mut DescriptorChain<M::T>, is_inflate:bool) -> result::Result<(), Error> {
-        let mut buf:[u8;4] = [0;4];
+        let mut buf:[u8;BALLOON_PFN_SIZE_BYTES as usize] = [0;BALLOON_PFN_SIZE_BYTES as usize];
         while let Some(desc) = chain.next() {
             let mut offset:u64 = 0;
             let len = desc.len() as u64;
@@ -109,7 +113,7 @@ where
                     self.deflate_page(pfn);
                 }
 
-                offset += 4;
+                offset += BALLOON_PFN_SIZE_BYTES as u64;
 
             }
             
